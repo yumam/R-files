@@ -1,0 +1,805 @@
+---
+title: "STT 481 Final Project Code"
+author: "Bradley Behan, Yuma Mizushima, Masaki Sasaki"
+date: "12/4/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Load in Packages
+```{r}
+library(caret)
+library(tree)
+library(ISLR)
+library(leaps)
+library(glmnet)
+library(boot)
+```
+
+
+# Read in Data
+```{r}
+train_knn <- read.csv("train.csv")
+test_knn <- read.csv("test.csv")
+train <- read.csv("train.csv")
+test <- read.csv("test.csv")
+dim(train)
+
+test$SalePrice <- 0
+
+all <- rbind(train,test) # joining train and test into one data frame
+
+str(train)
+```
+
+
+# Preprocessing
+```{r}
+factor.var = c()
+for (i in 1:dim(all)[2]) {
+  factor.var[i] = is.factor(all[,i])
+} # identify what variables are factors
+
+# Changing NA's in Numerical columns to the average of the column
+sum(is.na(all[,!factor.var]))
+colMeans(all[,!factor.var])
+
+# Removing NA Values and replacing them with the mean of the column
+all$LotArea <- ifelse(is.na(all$LotArea), mean(LotArea, na.rm=TRUE), train$LotArea)
+
+all$LotFrontage <- ifelse(is.na(all$LotFrontage), mean(all$LotFrontage, na.rm=TRUE), all$LotFrontage)
+
+all$LotFrontage[which(is.na(all$LotFrontage))] <- mean(all$LotFrontage, na.rm=T)
+
+all$MasVnrArea[which(is.na(all$MasVnrArea))] <- mean(all$MasVnrArea, na.rm = T)
+
+all$GarageYrBlt[which(is.na(all$GarageYrBlt))] <- mean(all$GarageYrBlt, na.rm = T)
+
+all$MasVnrArea[which(is.na(all$MasVnrArea))] <- mean(all$MasVnrArea, na.rm=T)
+
+all$BsmtFinSF1[which(is.na(all$BsmtFinSF1))] <- mean(all$BsmtFinSF1, na.rm=T)
+
+all$BsmtFinSF2[which(is.na(all$BsmtFinSF2))] <- mean(all$BsmtFinSF2, na.rm=T)
+
+all$BsmtUnfSF[which(is.na(all$BsmtUnfSF))] <- mean(all$BsmtUnfSF, na.rm=T)
+all$TotalBsmtSF[which(is.na(all$TotalBsmtSF))] <- mean(all$TotalBsmtSF, na.rm=T)
+all$BsmtFullBath[which(is.na(all$BsmtFullBath))] <- mean(all$BsmtFullBath, na.rm=T)
+
+all$BsmtHalfBath[which(is.na(all$BsmtHalfBath))] <- mean(all$BsmtHalfBath, na.rm=T)
+
+all$GarageArea[which(is.na(all$GarageArea))] <- mean(all$GarageArea, na.rm=T)
+all$GarageCars[which(is.na(all$GarageCars))] <- mean(all$GarageCars, na.rm=T)
+
+# Zero NA Values remain in numerical variables
+sum(is.na(all[,!factor.var]))
+sum(is.na(all[,factor.var]))
+
+categorical.index <- c(3,7,10,24,25,26,33,43,54,56,59,75,79)
+for (i in categorical.index){
+  all[is.na(all[,i]),i] <- names(which.max(table(all[,i])))
+}
+# what vairables that are in this for loop do NOT include in the next code chunk
+
+sum(is.na(all[,factor.var]))
+```
+
+```{r}
+# Categorical-Numerical Cleaning for KNN # 
+
+# Exterior Qual & Cond
+all$ExterQual = as.numeric(all$ExterQual)-1
+all$ExterCond = as.numeric(all$ExterCond)-1
+
+# Bsmt
+# transferring all NA Values for BsmtQual into 'None' Values
+all$BsmtQual <- factor(all$BsmtQual, levels = c(levels(all$BsmtQual), NA), labels = c(levels(all$BsmtQual), 'None'), exclude = NULL) 
+all$BsmtQual <- as.numeric(all$BsmtQual)-1
+
+all$BsmtCond <- factor(all$BsmtCond, levels = c(levels(all$BsmtCond), NA), labels = c(levels(all$BsmtCond), 'None'), exclude = NULL) 
+all$BsmtCond <- as.numeric(all$BsmtCond)-1
+
+all$BsmtFinType1 <- factor(all$BsmtFinType1, levels = c(levels(all$BsmtFinType1), NA), labels = c(levels(all$BsmtFinType1), 'None'), exclude = NULL) 
+all$BsmtFinType1 <- as.numeric(all$BsmtFinType1)-1
+
+all$BsmtFinType2 <- factor(all$BsmtFinType2, levels = c(levels(all$BsmtFinType2), NA), labels = c(levels(all$BsmtFinType2), 'None'), exclude = NULL) 
+all$BsmtFinType2 <- as.numeric(all$BsmtFinType2)-1
+
+all$Fence <- factor(all$Fence, levels = c(levels(all$Fence), NA), labels = c(levels(all$Fence), 'None'), exclude = NULL) 
+all$Fence <- as.numeric(all$Fence)-1
+
+# Garage Finish, Qual, Cond
+all$GarageFinish <- factor(all$GarageFinish, levels = c(levels(all$GarageFinish), NA), labels = c(levels(all$GarageFinish), 'None'), exclude = NULL)
+all$GarageFinish <- as.numeric(all$GarageFinish)-1
+
+all$GarageQual <- factor(all$GarageQual, levels = c(levels(all$GarageQual), NA), labels = c(levels(all$GarageQual), 'None'), exclude = NULL)
+all$GarageQual <- as.numeric(all$GarageQual)-1
+
+all$GarageCond <- factor(all$GarageCond, levels = c(levels(all$GarageCond), NA), labels = c(levels(all$GarageCond), 'None'), exclude = NULL)
+all$GarageCond <- as.numeric(all$GarageCond)-1
+
+#HeatingQC
+all$HeatingQC <- factor(all$HeatingQC, levels = c(levels(all$HeatingQC), NA), labels = c(levels(all$HeatingQC), 'None'), exclude = NULL)
+all$HeatingQC <- as.numeric(all$HeatingQC)-1
+
+# Pool 
+all$PoolQC <- factor(all$PoolQC, levels = c(levels(all$PoolQC), NA), labels = c(levels(all$PoolQC), 'None'), exclude = NULL) 
+all$PoolQC <- as.numeric(all$PoolQC)-1
+
+#FireplaceQu
+all$FireplaceQu <- factor(all$FireplaceQu, levels = c(levels(all$FireplaceQu), NA), labels = c(levels(all$FireplaceQu), 'None'), exclude = NULL) 
+all$FireplaceQu <- as.numeric(all$FireplaceQu)-1
+
+# Central Air
+all$CentralAir <- factor(all$CentralAir, levels = c(levels(all$CentralAir), NA), labels = c(levels(all$CentralAir), exclude = NULL))
+all$CentralAir <- as.numeric(all$CentralAir)-1
+
+# Kitchen Quality
+levels(all$KitchenQual) <- contrasts(all$KitchenQual)[,1]
+all$KitchenQual <- as.numeric(all$KitchenQual)-1
+
+sum(is.na(all[,!factor.var]))
+sum(is.na(all[,factor.var]))
+```
+
+```{r}
+# Convert into matrix to reduce 
+all <- all[,-1]
+all <- model.matrix(SalePrice~., data = all)[,-1]
+
+#seperate train and test
+# combine train and test and then perform preprocessing 
+# then seperate train from test 
+train_knn_actual <- all[1:1460,]
+test_knn <- all[1461:nrow(all),]
+sum(is.na(train_knn_actual))
+sum(is.na(test_knn))
+```
+
+
+# KNN
+```{r}
+library(FNN)
+#y_knn <- train_knn_actual$Neighborhood
+n_knn <- dim(train_knn_actual)[1]
+train_knn2 <- as.matrix(train_knn_actual)
+
+knn_error <- rep(NA, n_knn)
+price <- train$SalePrice
+
+for (i in (1:n_knn)){
+  knn_proj <- knn.reg(train_knn2[-i,], train_knn2[i,], y = price[-i], k=1)
+  knn_error[i] <- as.numeric(price[i] - knn_proj$pred)^2
+}
+knn_error1 <- knn_error
+sqrt(mean(knn_error1))
+
+for (i in (1:n_knn)){
+  knn_proj <- knn.reg(train_knn2[-i,], train_knn2[i,], y = train_knn$SalePrice[-i], k=5)
+  knn_error[i] <- as.numeric(price[i] - knn_proj$pred)^2
+}
+knn_error2 <- knn_error
+sqrt(mean(knn_error2)) #estimated test error #
+
+for (i in (1:n_knn)){
+  knn_proj <- knn.reg(train_knn2[-i,], train_knn2[i,], y = train_knn$SalePrice[-i], k=10)
+  knn_error[i] <- as.numeric(price[i] - knn_proj$pred)^2
+}
+knn_error3 <- knn_error
+sqrt(mean(knn_error3)) 
+
+for (i in (1:n_knn)){
+  knn_proj <- knn.reg(train_knn2[-i,], train_knn2[i,], y = train_knn$SalePrice[-i], k=100)
+  knn_error[i] <- as.numeric(price[i] - knn_proj$pred)^2
+}
+knn_error4 <- knn_error
+sqrt(mean(knn_error4)) 
+```
+
+```{r}
+# Prediction Knn
+# use knn function, with training and test with best choice for k, plug result into kaggle to get error 
+n_pred <- dim(all)[1]
+library(FNN)
+
+knn_pred <- knn.reg(train_knn2, test_knn, y = price, k=5)
+#knn_pred
+knn_csv <- knn_pred$pred
+knn_csv <- cbind("Id"=1461:2919, "SalePrice" = knn_csv)
+write.csv(knn_csv, file = "knn_pred_midterm.csv", row.names = FALSE)
+```
+
+![KNN Prediction](/Users/bradleybehan/Desktop/stt481_project/stt481_project/images_project/knn_pred_midterm.png)
+
+
+## Linear Regression ##
+In order to complete linear regression, the residual diagnostics must all be thoroughly checked.
+```{r}
+par(mfrow=c(2,2))
+train_linear2 <- data.frame(train_knn_actual)
+test_linear <- data.frame(test_knn)
+#test_linear[1460,] <- 0
+
+# Step 1: Residual Plot
+fit_lm <- lm(price~., data = train_linear2) #linear regression
+lm_mse <- mean(fit_lm$residuals^2) #Mean Squared Error
+coef(fit_lm) # coefficients
+#par(mfrow=c(2,2))
+plot(fit_lm)
+```
+
+
+```{r}
+# Log Transformation
+par(mfrow=c(2,2))
+fit_lm_log <- lm((log(price))~., data=train_linear2)
+plot(fit_lm_log)
+```
+
+```{r}
+# Square Root Transformation
+fit_lm_sqrt <- lm((sqrt(price))~., data=train_linear2)
+plot(fit_lm_sqrt)
+
+# Squared Transformation
+fit_lm_squared <- lm((price^2)~., data=train_linear2)
+plot(fit_lm_squared)
+```
+
+# Comments: Step 1: Non-Linearity
+For non-linearity we need to analyze the "Residuals vs Fitted" plot. To illustrate the fit my data has the red line needs to be as flush with the 0.0 dotted line in the plot. In the base fit_lm plot the fit is skewed. To correct this, I plotted the log, sqrt, and squared variations of the fit_lm. The best fit plot is the fit_lm_log. 
+
+```{r}
+# Step 3
+plot(fit_lm_log$residuals, xlab = "Fitted Values", ylab = "Residuals")
+```
+
+```{r}
+# Step 4,5 #
+# Identify Large Leverage Points, Outliers
+par(mfrow=c(2,2))
+plot(fit_lm) # plotting commands
+#plot(hatvalues(fit_lm), ylim = c(0,0.6)) #identifying largest leverage statistic
+#which.max(hatvalues(fit_lm)) 
+
+# removing large leverage and large residuals
+HighLeverage <- cooks.distance(fit_lm_log) > (80/nrow(train_linear2))
+LargeResiduals <- rstudent(fit_lm_log) > 3
+train_linear1 <- train_linear2[!HighLeverage & !LargeResiduals,]
+confint(fit_lm_log) # 95% confindence interval
+
+# removing high leverage in price
+price1 <- price[!HighLeverage & !LargeResiduals]
+```
+
+#7: Normality 
+```{r}
+plot(fit_lm_log)
+```
+
+# True Test Error
+```{r}
+# Prediction
+#Implementing New Linear Regression
+library(boot)
+
+new_fit_lm <- lm(log(price)~., data = train_linear2)
+lm_prediction <- exp(predict(new_fit_lm,  test_linear)) #this yields the true test error, plug into kaggle to get score
+
+lm_csv <- cbind("Id"=1461:2919, "SalePrice" = lm_prediction)
+write.csv(lm_csv, file = "lm.csv", row.names = FALSE)
+```
+![Linear Regression Prediction](/Users/bradleybehan/Desktop/stt481_project/stt481_project/images_project/lm_midterm.png)
+
+# Linear Regression Prediction Comments:
+Although linear regression is a simple method, it is very important. My response in the prediction is the SalePrice. This is what I want to caluclate and gauge my error. My prediction for Linear Regression is one of the best in my report with 0.14058. 
+
+# Estimated Test Error: Linear Regression
+```{r}
+# use hw3 cv.glm to check for estimated test error.
+train_linear3 <- cbind(train_linear2, price)
+linear_control <- trainControl(method="cv", number = 10)
+lm_fit2 <- train(log(price)~., data = train_linear3, method="lm", trControl = linear_control)
+print(lm_fit2)
+
+```
+
+## Subset Selection ##
+```{r}
+library(ISLR)
+library(leaps)
+
+train_best <- regsubsets(price~., data = data.frame(train_knn_actual), nvmax = 3, really.big = T)
+train_best_summary <- summary(train_best)
+head(train_best_summary)
+# Cannot run, past nvmax = 5, get error that forces me to terminate R. 
+```
+
+# Best Subset
+```{r}
+# Best Methods
+par(mfrow=c(2,2))
+plot(train_best_summary$rss, type = "b", ylab = "rss")
+plot(train_best_summary$cp, type = "b", ylab = "cp")
+
+points(4, train_best_summary$cp[4], col = "red", cex = 2, pch = 20)
+which.min(train_best_summary$cp)
+
+plot(train_best_summary$bic, type = "b", ylab = "bic")
+which.min(train_best_summary$bic)
+points(4, train_best_summary$bic[4], type = "b", col = "green", cex=2, pch = 20)
+
+plot(train_best_summary$adjr2, type = "b", ylab = "adjr2")
+which.max(train_best_summary$adjr2)
+points(4, train_best_summary$adjr2[4], col = "blue", cex = 2, pch=20)
+```
+
+# Prediction Step: Best
+```{r}
+predict_regsub <- function(test, newdata, id){
+  form <- as.formula(test$call[[2]])
+  mat <- model.matrix(~., newdata)
+  coefic <- coef(test, id = id)
+  xvars <- names(coefic)
+  return(mat[,xvars]%*%coefic)
+}
+
+best_rss <- predict_regsub(train_best, newdata=data.frame(test_knn), id=which.min(train_best_summary$rss))
+                           
+best_bic <- predict_regsub(train_best, newdata = data.frame(test_knn), id=which.min(train_best_summary$bic))
+
+best_cp <- predict_regsub(train_best, newdata=data.frame(test_knn),id=which.min(train_best_summary$cp))
+
+best_adjr2 <- predict_regsub(train_best, newdata=data.frame(test_knn),id= which.max(train_best_summary$adjr2))
+
+# Converting to .csv file
+bestrss_csv <- cbind("Id"=1461:2919, "SalePrice" = best_rss)
+write.csv(bestrss_csv, file = "best_rss_pred_midterm.csv", row.names = FALSE)
+
+bestbic_csv <- cbind("Id"=1461:2919, "SalePrice" = best_bic)
+write.csv(bestbic_csv, file = "best_bic_pred_midterm.csv", row.names = FALSE)
+
+bestcp_csv <- cbind("Id"=1461:2919, "SalePrice" = best_cp)
+write.csv(bestcp_csv, file = "best_cp_pred_midterm.csv", row.names = FALSE)
+
+bestadjr2_csv <- cbind("Id"=1461:2919, "SalePrice" = best_adjr2)
+write.csv(bestadjr2_csv, file = "best_adjr2_pred_midterm.csv", row.names = FALSE)
+
+```
+
+# Estimated Test Error: Best
+```{r}
+library(leaps)
+library(boot)
+train_linear4 <- cbind(train_linear2, price)
+cv_error_best <- rep(0,5)
+for (i in 1:10){
+  glm_fit2 <- glm(price~., data = train_linear4)
+  cv_error_best[i] <- cv.glm(train_linear4, glm_fit2, K=10)$delta[1]
+}
+mean(cv_error_best)
+```
+
+# Results 
+![Best: RSS](/Users/bradleybehan/Desktop/stt481_project/stt481_project/images_project/best_rss.png)
+
+![Best: BIC](/Users/bradleybehan/Desktop/stt481_project/stt481_project/images_project/best_bic_midterm.png)
+
+![Best: Cp](/Users/bradleybehan/Desktop/stt481_project/stt481_project/images_project/best_cp_midterm.png)
+
+![Best: Adjr2](/Users/bradleybehan/Desktop/stt481_project/stt481_project/images_project/best_adjr2_midterm.png)
+
+
+# Best Subset Method Comments
+The scores for the BIC, CP, and Adjr2 are all very bad and indicate a large error in the predicted housing prices. The trouble with the best subset method is that a low RSS or a high R^2 indicates a model with a low training error, when there must be a low test error. The results indicate that this method does not produce an accurate prediction for the housing prices. The major negative that Best Subset has is that there are 2^p possible models. 
+
+# Forward Stepwise
+```{r}
+forward <- regsubsets(price~., data = data.frame(train_knn_actual), nvmax=150, method = "forward")
+forward_summary <- summary(forward)
+forward_summary
+
+par(mfrow=c(2,2))
+plot(forward_summary$rss, type = "b", ylab = "rss")
+plot(forward_summary$cp, type = "b", ylab = "cp")
+
+#cp
+which.min(forward_summary$cp)
+points(86, forward_summary$cp[86], col="red", cex=2, pch = 20)
+
+#bic
+plot(forward_summary$bic, type = "b", ylab="bic")
+which.min(forward_summary$bic)
+points(51,forward_summary$bic[51], col="green", cex=2, pch=20)
+
+#adjr2
+plot(forward_summary$adjr2, type = "b", ylab="adjr2")
+which.max(forward_summary$adjr2)
+points(126, forward_summary$adjr2[126], col = "blue", cex=2, pch=20)
+```
+
+
+# Forward Prediction
+```{r}
+pred_fwd_rss <- predict_regsub(forward, newdata = data.frame(test_knn),id=which.min(forward_summary$rss))
+
+pred_fwd_bic <- predict_regsub(forward, newdata = data.frame(test_knn),id=which.min(forward_summary$bic))
+
+pred_fwd_cp <- predict_regsub(forward, newdata = data.frame(test_knn),id=which.min(forward_summary$cp))
+
+pred_fwd_adjr2<- predict_regsub(forward, newdata = data.frame(test_knn),id=which.min(forward_summary$adjr2))
+
+#pred_fwd_rss
+#pred_fwd_bic
+#pred_fwd_cp
+#pred_fwd_adjr2
+
+# Storing in .csv files 
+fwdrss_csv <- cbind("Id"=1461:2919, "SalePrice" = pred_fwd_rss)
+write.csv(fwdrss_csv, file = "fwd_rss.csv", row.names = FALSE)
+
+fwdbic_csv <- cbind("Id"=1461:2919, "SalePrice" = pred_fwd_bic)
+write.csv(fwdbic_csv, file = "fwd_bic.csv", row.names = FALSE)
+
+fwdcp_csv <- cbind("Id"=1461:2919, "SalePrice" = pred_fwd_cp)
+write.csv(fwdcp_csv, file = "fwd_cp.csv", row.names = FALSE)
+
+fwdadjr2_csv <- cbind("Id"=1461:2919, "SalePrice" = pred_fwd_adjr2)
+write.csv(fwdadjr2_csv, file = "fwd_adjr2.csv", row.names = FALSE)
+```
+
+
+# Estimated Test Error: Forward
+```{r}
+library(leaps)
+library(boot)
+
+fold_index <- cut(sample(1:nrow(train_linear3)), breaks = 10, labels = FALSE)
+cv_error_best <- rep(0, 10)
+for (i in 1:126){
+   cat("i=", i, "\n")
+   error <- rep(0,10)
+   for (k in 1:10){
+     train_best_cv <- train_linear3[fold_index!=k,]
+     test_best_cv <- train_linear3[fold_index==k,]
+     true_y <- test_best_cv[,'price']
+     best_fit_cv <- regsubsets(price~., data=train_best_cv, nvmax = 200, method = "forward")
+     pred_best_cv <- predict_regsub(best_fit_cv, test_best_cv, id=i)
+     error[k] <- mean((pred_best_cv-true_y)^2)
+   }
+  # print(mean(error))
+}
+# note each of the bic, cp, and adjr2 estimated test error based on the 13th and 15th 
+# NOTE: Commented out as it takes a very long time to run. 
+```
+
+# Estimated Test Error Forward Stepwise
+BIC: point 86, 1419937192
+CP: point 51, 1564218204
+Adjr2: point 126, 1506803815
+
+
+![Forward: RSS](/Users/bradleybehan/Desktop/stt481_project/stt481_project/images_project/fwd_rss.png)
+
+![Forward: BIC](/Users/bradleybehan/Desktop/stt481_project/stt481_project/images_project/fwd_bic.png)
+
+![Forward: CP](/Users/bradleybehan/Desktop/stt481_project/stt481_project/images_project/fwd_cp.png)
+
+![Forward: ADJR2](/Users/bradleybehan/Desktop/stt481_project/stt481_project/images_project/fwd_adjr2.png)
+
+# Forward Stepwise Comments
+The scores for the BIC and CP of forward stepwise are better than their counterparts in the best subset method. There is not much difference in the adjr2 result in comparison to the best subset adjr2 result. In general, the forward stepwise method is computationally cheaper than best subset and it does not guaranteed to find the best subset in the data. It can only be applied when the number of predictors is greater than n.
+
+
+# Backward Stepwise
+```{r}
+train_backward <- data.frame(train_knn_actual)
+backward <- regsubsets(price~., data = train_backward, nvmax = 80, method = "backward")
+backward_summary <- summary(backward)
+#backward_summary
+```
+
+```{r}
+# Plot Commands
+par(mfrow = c(2,2))
+plot(backward_summary$rss, type = "b", ylab = "rss")
+plot(backward_summary$cp, type = "b", ylab = "cp")
+
+which.min(backward_summary$cp)
+points(35, backward_summary$cp[35], col = "red", cex=2, pch=20)
+
+which.min(backward_summary$bic)
+plot(backward_summary$bic, type = "b", ylab = "bic")
+points(24, backward_summary$cp[24], col = "green", cex=2, pch=20)
+
+which.min(backward_summary$adjr2)
+plot(backward_summary$adjr2, type = "b", ylab = "bic")
+points(1, backward_summary$cp[1], col = "blue", cex=2, pch=20)
+```
+
+
+# Prediction Backwards Stepwise
+```{r}
+test_backward <- data.frame(test_knn)
+
+pred_back_rss <- predict_regsub(backward, newdata = test_backward, id = which.min(backward_summary$rss))
+
+pred_back_bic <- predict_regsub(backward, newdata = test_backward, id = which.min(backward_summary$bic))
+
+pred_back_cp <- predict_regsub(backward, newdata = test_backward, id = which.min(backward_summary$cp))
+
+pred_back_adjr2 <- predict_regsub(backward, newdata = test_backward, id = which.min(backward_summary$adjr2))
+
+# Storing in .csv files 
+bckrss_csv <- cbind("Id"=1461:2919, "SalePrice" = pred_back_rss)
+write.csv(bckrss_csv, file = "back_rss_midterm.csv", row.names = FALSE)
+
+bckbic_csv <- cbind("Id"=1461:2919, "SalePrice" = pred_back_bic)
+write.csv(bckbic_csv, file = "back_bic_midterm.csv", row.names = FALSE)
+
+bckcp_csv <- cbind("Id"=1461:2919, "SalePrice" = pred_back_cp)
+write.csv(bckcp_csv, file = "back_cp_midterm.csv", row.names = FALSE)
+
+bckadjr2_csv <- cbind("Id"=1461:2919, "SalePrice" = pred_back_adjr2)
+write.csv(bckadjr2_csv, file = "back_adjr2_midterm.csv", row.names = FALSE)
+```
+
+# Estimated Test Error: Backward
+```{r}
+library(leaps)
+library(boot)
+
+fold_index <- cut(sample(1:nrow(train_linear3)), breaks = 10, labels = FALSE)
+cv_error_best <- rep(0, 10)
+for (i in 1:40){
+   cat("i=", i, "\n")
+   error_back <- rep(0,10)
+   for (k in 1:10){
+     train_best_cv <- train_linear3[fold_index!=k,]
+     test_best_cv <- train_linear3[fold_index==k,]
+     true_y <- test_best_cv[,'price']
+     best_fit_cv <- regsubsets(price~., data=train_best_cv, nvmax = 200, method = "backward")
+     pred_best_cv <- predict_regsub(best_fit_cv, test_best_cv, id=i)
+     error_back[k] <- mean((pred_best_cv-true_y)^2)
+   }
+   print(mean(error_back))
+}
+```
+
+
+# Estimated Test Errors for Backwards Stepwise
+BIC:point 35, 1718570574
+CP:point 24, 2093298831
+Adjr2: point 1, 826431765
+```{r}
+sqrt(1718570574) # BIC
+sqrt(2093298831)
+sqrt(826431765)
+```
+
+
+![Backward: RSS](/Users/bradleybehan/Desktop/stt481_project/stt481_project/images_project/back_rss.png)
+
+
+![Backward: BIC](/Users/bradleybehan/Desktop/stt481_project/stt481_project/images_project/back_bic.png)
+
+![Backward: CP](/Users/bradleybehan/Desktop/stt481_project/stt481_project/images_project/back_cp.png)
+
+![Backward: ADJR2](/Users/bradleybehan/Desktop/stt481_project/stt481_project/images_project/back_adjr2.png)
+
+# Backwards Stepwise Comments 
+It appears from the true test error results for each summary variable for backwards stepwise are not reliable as the error is extremely high. In general, backward stepwise is similar to forward stepwise in that it is not entriely reliable to find the best subset. It also cannot be applied when p>n due to the inability to perform least squares.
+
+
+# Ridge
+```{r}
+library(glmnet)
+# X <- model.matrix(SalePrice~., train_knn_actual)
+# y <- train_knn_actual$SalePrice
+
+ridge <- glmnet(train_knn_actual,price, alpha = 0) # 0 indicates ridge reg.
+ridge$lamda
+
+grid <- 10^seq(10, -2, length=100)
+ridge_mod <- glmnet(train_knn_actual,price,alpha=0, lambda =grid)
+dim(coef(ridge_mod))
+ridge_mod$lambda[41]
+coef(ridge_mod)[,41]
+
+cv_out <- cv.glmnet(train_knn_actual,price, alpha = 0, nfolds = 10)
+plot(cv_out)
+
+bestlam_proj <- cv_out$lambda.min
+bestlam_proj
+
+# Finding Estimated Test Error
+coef(ridge_mod, s = bestlam_proj) # Lambda = bestlam_proj
+
+cv_out$lambda == bestlam_proj
+cv_out$cvm[80]
+
+sqrt(cv_out$cvm[80]) # Estimated Test Error
+
+# Prediction
+ridge_pred <- predict(ridge_mod, s = bestlam_proj, newx = test_knn)
+
+# Writing .csv file for kaggle submission
+ridge_csv <- cbind("Id"=1461:2919, "SalePrice" = ridge_pred)
+write.csv(ridge_csv, file = "ridge.csv", row.names = FALSE)
+```
+                  
+![Shrinkage: Ridge](/Users/bradleybehan/Desktop/stt481_project/stt481_project/images_project/ridge.png)
+
+# Lasso
+```{r}
+library(glmnet)
+lasso_mod <- glmnet(train_knn_actual,price, alpha=1, lambda=grid)
+
+# Use cv to find parameter, lambda
+cv_out_lasso <- cv.glmnet(train_knn_actual, price, alpha=1)
+plot(cv_out_lasso)
+
+bestlam_lasso <- cv_out_lasso$lambda.min
+coef(lasso_mod, s=bestlam_lasso)
+
+cv_out_lasso$lambda == bestlam_lasso
+cv_out_lasso$cvm[40]
+
+sqrt(cv_out_lasso$cvm[40]) # Estimated Test error
+
+# Predict
+lasso_pred <- predict(lasso_mod, s = bestlam_lasso, newx = test_knn) 
+
+```
+
+![Lasso](/Users/bradleybehan/Desktop/stt481_project/stt481_project/images_project/lasso_midterm.png)
+
+# Shrinkage Method Comments
+Out of all my methods, the shrinkage methods of Ridge and Lasso performed the best with a score of 0.16032 and 0.16030 respecitvely. Unlike best subset, forward stepwise, and backward stepwise, they account for all the predictors in the final model. The penalty shrinks all of the coefficients towards zero. However, it will not set them to exactly zero. The lasso improved the least squares due to the bias-variance trade-off. This leads to lower test error.
+
+
+# Genearlized Additive Model (GAM)
+```{r}
+library(gam)
+gam_proj <- gam(price~., data = train_linear2)
+gam_proj
+
+# Prediction
+test_gam_frame<- data.frame(test_knn)
+gam_pred <- predict(gam_proj, test_gam_frame)
+gam_pred
+```
+
+# GAM Estimated Test Error
+```{r}
+library(mgcv)
+library(caret)
+set.seed(0)
+tr_control_gam <- trainControl(method="cv",number=10)
+
+model_gam <- train(log(price) ~.,
+        data = train_linear3,
+        method = "gam",
+        trControl = tr_control_gam,)
+        tuneGrid = data.frame(method = "GCV.Cp",
+        select = FALSE)
+print(model_gam)
+```
+
+![GAM](/Users/bradleybehan/Desktop/stt481_project/stt481_project/images_project/gam.png)
+
+# Regression Trees
+```{r}
+# Regression Tree
+#library(ISLR)
+library(tree)
+tree_fit <- tree(log(price)~., data = train_linear3)
+tree_fit
+summary(tree_fit)
+
+# Plotting Commands
+par(mfrow=c(1,1))
+plot(tree_fit)
+text(tree_fit, pretty = 0)
+```
+
+```{r}
+cv_tree <- cv.tree(tree_fit, K=10)
+par(mfrow=c(1,2))
+plot(cv_tree$k, cv_tree$dev, type = "b")
+plot(cv_tree$size, cv_tree$dev, type = "b")
+```
+
+```{r}
+cv_tree_best_size <- cv_tree$size[which.min(cv_tree$dev)]
+cv_tree_best_size 
+
+# Prune Tree
+prune <- prune.tree(tree_fit, best = cv_tree_best_size)
+par(mfrow=c(1,1))
+plot(prune)
+text(prune, pretty=0)
+```
+
+#Bagging Method:
+```{r}
+library(randomForest)
+ncol(train_knn) - 1
+
+SalePrice_bag <- randomForest(log(price)~., data=train_linear3,ntree=1000,mtry=80, importance=TRUE)
+importance(SalePrice_bag)
+
+bag.pred <- predict(SalePrice_bag, newdata = test_linear) 
+bag_csv <- cbind("Id"=1461:2919, "SalePrice" = exp(bag.pred))
+write.csv(bag_csv, file = "bag_final2.csv", row.names = FALSE)
+mean((bag.pred - train_linear3$price)^2)
+```
+![Bagging](/Users/bradleybehan/Desktop/stt481_project/stt481_project/images_project/bagfinal.jpg)
+
+#CV estimate for Bagging
+```{r}
+mtry <- (ncol(train_knn)-1)
+mtry
+grid <- expand.grid(mtry= c(mtry))
+model_bag <- train(log(price) ~ ., data = train_linear3, method = "rf",ntree = 50, tuneGrid = grid)
+print(model_bag)
+```
+
+#Random Forest
+```{r}
+library(randomForest)
+randf <- randomForest(log(price) ~ .,data=train_linear2)
+
+# Predict
+randf_pred <- predict(randf, newdata = test_linear) 
+
+# Convert to .csv file
+randf_csv <- cbind("Id"=1461:2919, "SalePrice" = exp(randf_pred))
+write.csv(randf_csv, file = "randf_test.csv", row.names = FALSE)
+```
+![Random Forest](/Users/bradleybehan/Desktop/stt481_project/stt481_project/images_project/randomforest.jpg)
+
+#CV Estimate for Random Forest
+```{r}
+mtry <- (ncol(train_linear3)-1)/3
+grid <- expand.grid(mtry= c(mtry))
+model_randf <- train(log(price) ~ ., data = train_linear3, method = "rf",ntree = 50, tuneGrid = grid)
+print(model_randf)
+```
+
+# Removing outliers
+```{r}
+library(tidyverse)
+train_linear2$SalePrice <- train$SalePrice
+train_boost <- train_linear2 %>% filter(GrLivArea < 4500)
+```
+
+# Boosting:
+```{r }
+library(gbm)
+set.seed(0)
+
+fit_gbm = gbm(log(SalePrice)~., data=train_boost,shrinkage=0.05,distribution = "gaussian",n.trees=700,interaction.depth = 5,n.minobsinnode = 10)
+
+# Predict
+gbm_pred <- predict(fit_gbm, test_linear,n.trees=700)
+
+# Convert to .csv file
+gbm_csv <- cbind("Id"=1461:2919, "SalePrice" = exp(gbm_pred))
+write.csv(gbm_csv, file = "gbm_test.csv", row.names = FALSE)
+```
+# kaggle: 0.12717
+
+#CV estimate for Boosting
+```{r, echo=TRUE,results='hide'}
+library(caret)
+tr_control_gbm <- trainControl(method="cv",number=10)
+grid_gbm <- expand.grid(n.trees = c(700), interaction.depth = c(5), shrinkage = 0.05,n.minobsinnode=10)
+model_gbm <- train(log(SalePrice) ~ ., data=train_boost, method = 'gbm', trControl=tr_control_gbm,tuneGrid=grid_gbm,metric='RMSE',maximize=FALSE)
+```
+
+```{r}
+print(model_gbm) #show RMSE
+```
